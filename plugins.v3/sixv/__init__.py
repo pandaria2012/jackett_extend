@@ -59,6 +59,8 @@ class SixV(_PluginBase):
     _max_results = 10
     _rename = True
     _timeout = 30
+    _sort_by = "newest"
+    _page_max_rows = 100
     _session: Optional[requests.Session] = None
 
     # ------------------------------------------------------------------ config
@@ -70,6 +72,8 @@ class SixV(_PluginBase):
             "max_results": 50,
             "rename": True,
             "search_timeout": 30,
+            "sort_by": "newest",
+            "page_max_rows": 100,
         }
 
     def init_plugin(self, config: Optional[Mapping[str, Any]] = None) -> None:
@@ -98,6 +102,14 @@ class SixV(_PluginBase):
             values["search_timeout"] = max(5, min(int(values.get("search_timeout") or 30), 120))
         except (TypeError, ValueError):
             values["search_timeout"] = 30
+        sort_by = str(values.get("sort_by") or "newest").strip()
+        if sort_by not in {"newest", "oldest", "resolution", "size"}:
+            sort_by = "newest"
+        values["sort_by"] = sort_by
+        try:
+            values["page_max_rows"] = max(1, min(int(values.get("page_max_rows") or 100), 300))
+        except (TypeError, ValueError):
+            values["page_max_rows"] = 100
         values["rename"] = bool(values.get("rename", True))
         values["enabled"] = bool(values.get("enabled"))
 
@@ -106,6 +118,8 @@ class SixV(_PluginBase):
         self._max_results = values["max_results"]
         self._rename = values["rename"]
         self._timeout = values["search_timeout"]
+        self._sort_by = values["sort_by"]
+        self._page_max_rows = values["page_max_rows"]
         self._session = requests.Session()
         self._session.headers.update(
             {
@@ -541,13 +555,27 @@ class SixV(_PluginBase):
                     details.extend(result.get("torrents") or [])
                     all_pan.extend(result.get("pan_links") or [])
         # 最新一集优先，其次高分辨率优先
-        details.sort(
-            key=lambda item: (
-                -self._episode_number(item.get("quality", "")),
-                -self._resolution_rank(item.get("quality", "") or item.get("display_name", "")),
-                item.get("display_name", ""),
+        sort_by = self._sort_by
+
+        def _sort_key(item: Dict[str, Any]) -> Any:
+            episode = self._episode_number(item.get("quality", ""))
+            resolution = self._resolution_rank(
+                item.get("quality", "") or item.get("display_name", "")
             )
-        )
+            try:
+                size = int(item.get("size") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            title = item.get("display_name", "")
+            if sort_by == "oldest":
+                return (episode if episode >= 0 else 10 ** 9, -resolution, title)
+            if sort_by == "resolution":
+                return (-resolution, -episode, title)
+            if sort_by == "size":
+                return (-size, -episode, title)
+            return (-episode, -resolution, title)
+
+        details.sort(key=_sort_key)
         details = details[: self._max_results]
         self._record_pan_links(all_pan)
         if details:
@@ -662,6 +690,8 @@ class SixV(_PluginBase):
             "rename": self._rename,
             "max_results": self._max_results,
             "timeout": self._timeout,
+            "sort_by": self._sort_by,
+            "page_max_rows": self._page_max_rows,
         }
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -731,6 +761,48 @@ class SixV(_PluginBase):
                 ],
             }
         ]
+        form[0]["content"].extend(
+            [
+                {
+                    "component": "VRow",
+                    "content": [
+                        {
+                            "component": "VCol",
+                            "props": {"cols": 12, "md": 6},
+                            "content": [
+                                {
+                                    "component": "VSelect",
+                                    "props": {
+                                        "model": "sort_by",
+                                        "title": "搜索结果排序",
+                                        "items": [
+                                            {"title": "最新集数优先", "value": "newest"},
+                                            {"title": "最早集数优先", "value": "oldest"},
+                                            {"title": "画质优先（2160p/4K）", "value": "resolution"},
+                                            {"title": "文件大小优先", "value": "size"},
+                                        ],
+                                    },
+                                }
+                            ],
+                        },
+                        {
+                            "component": "VCol",
+                            "props": {"cols": 12, "md": 6},
+                            "content": [
+                                {
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "page_max_rows",
+                                        "title": "插件页面展示行数（1-300）",
+                                        "type": "number",
+                                    },
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ]
+        )
         return form, self._defaults()
 
     def get_page(self) -> Optional[List[dict]]:
@@ -766,12 +838,12 @@ class SixV(_PluginBase):
                         "type": "info",
                         "variant": "tonal",
                         "prepend-icon": "mdi-magnet",
-                        "text": f"最近搜索：{keyword}，共 {len(search_results)} 条种子（展示前 100 条，最新一集在前，页面可滚动）。",
+                        "text": f"最近搜索：{keyword}，共 {len(search_results)} 条种子（展示前 {min(len(search_results), self._page_max_rows)} 条，最新一集在前，页面可滚动）。",
                     },
                 }
             )
             rows = []
-            for item in search_results[:100]:
+            for item in search_results[: self._page_max_rows]:
                 rows.append(
                     {
                         "component": "tr",
@@ -842,12 +914,12 @@ class SixV(_PluginBase):
                         "type": "info",
                         "variant": "tonal",
                         "prepend-icon": "mdi-cloud-download",
-                        "text": f"最近收集到 {len(pan_links)} 条网盘链接（最多展示 100 条），来自 6v520 详情页，仅用于手动转存。",
+                        "text": f"最近收集到 {len(pan_links)} 条网盘链接（最多展示 {min(len(pan_links), self._page_max_rows)} 条），来自 6v520 详情页，仅用于手动转存。",
                     },
                 }
             )
             rows = []
-            for item in pan_links[:100]:
+            for item in pan_links[: self._page_max_rows]:
                 rows.append(
                     {
                         "component": "tr",
