@@ -26,22 +26,22 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas.types import MediaSource
 
-_FALLBACK_CONFIG = "/config/jackett_extend.json"
+_FALLBACK_CONFIG = "/config/jackett_search.json"
 _MOVIE_CATS = list(range(2000, 3000))
 _TV_CATS = list(range(5000, 6000))
 
 
-class JackettExtend(_PluginBase):
+class JackettSearch(_PluginBase):
     """Jackett 聚合搜索插件（插件资源源架构）。"""
 
-    plugin_name = "JackettExtend"
+    plugin_name = "JackettSearch"
     plugin_desc = "通过 Jackett 的公开/半公开/私有索引器扩展 MoviePilot 资源检索"
     plugin_icon = "Jackett.png"
     plugin_version = "1.0.0"
     plugin_author = "pandaria2012"
     author_url = "https://github.com/pandaria2012/jackett_extend"
     plugin_label = ""
-    plugin_config_prefix = "jackett_extend_"
+    plugin_config_prefix = "jackett_search_"
     plugin_order = 17
     # 0 = 不要求站点认证等级即可加载；真正能否搜索见 README 的说明
     auth_level = 0
