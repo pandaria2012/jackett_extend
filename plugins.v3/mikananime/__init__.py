@@ -504,7 +504,7 @@ class MikanAnime(_PluginBase):
                     media_source=None,
                     media_id=None,
                     labels=[],
-                    category=MediaType.TV,
+                    category="动漫",
                     downloadvolumefactor=1.0,
                     uploadvolumefactor=1.0,
                 )

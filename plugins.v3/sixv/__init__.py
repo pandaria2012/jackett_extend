@@ -606,11 +606,7 @@ class SixV(_PluginBase):
 
         results: List[TorrentInfo] = []
         for item in details:
-            category = None
-            if MediaType is not None and item.get("is_tv"):
-                category = MediaType.TV
-            elif MediaType is not None:
-                category = MediaType.MOVIE
+            category = "电视剧" if item.get("is_tv") else "电影"
             results.append(
                 TorrentInfo(
                     site_name="6V电影",

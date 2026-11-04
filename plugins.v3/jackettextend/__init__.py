@@ -187,11 +187,9 @@ class JackettExtend(_PluginBase):
             except (TypeError, ValueError):
                 continue
         if any(2000 <= n < 3000 for n in nums):
-            from app.schemas.types import MediaType
-            return MediaType.MOVIE
+            return "电影"
         if any(5000 <= n < 6000 for n in nums):
-            from app.schemas.types import MediaType
-            return MediaType.TV
+            return "电视剧"
         return None
 
     def _request_json(self, path: str, params: Dict[str, Any], timeout: Optional[float] = None) -> Any:
