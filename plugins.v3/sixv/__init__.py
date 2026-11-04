@@ -259,6 +259,7 @@ class SixV(_PluginBase):
             return None
 
         source_name = h1 or page_title
+        suffix = ""
         m = re.search(r"《([^》]+)》", source_name)
         if m:
             name = m.group(1).strip()
@@ -269,11 +270,32 @@ class SixV(_PluginBase):
             quality = ""
         name = self._clean_filename(name) or self._clean_filename(page_title)
         quality = self._clean_filename(quality)
-        display_name = name + (f".{quality}" if quality else "")
-        if display_name and not self._rename:
-            display_name = name
         if not name:
             return None
+
+        # 组装规范显示名：影视名 + 年份 + 剧集/画质
+        is_tv = bool(_TV_PATH_RE.search(url))
+        year = ""
+        year_match = re.search(r"((?:19|20)\d{2})", meta.get("年 代") or "")
+        if year_match:
+            year = year_match.group(1)
+        episode = ""
+        if is_tv:
+            ep_match = re.search(r"更新\s*(\d{1,3})(?:\s*-\s*(\d{1,3}))?", suffix)
+            if ep_match:
+                begin = int(ep_match.group(1))
+                end = int(ep_match.group(2) or begin)
+                episode = f"S01E{begin:02d}" + (f"-E{end:02d}" if end != begin else "")
+            elif "全集" in suffix:
+                episode = "Complete"
+        if is_tv:
+            tail = episode or suffix or quality
+        else:
+            tail = quality or suffix
+        pieces = [piece for piece in (name, year, tail) if piece]
+        display_name = ".".join(pieces)
+        if not self._rename:
+            display_name = ".".join(piece for piece in (name, year, episode) if piece)
 
         size = 0
         try:
@@ -284,11 +306,13 @@ class SixV(_PluginBase):
             "name": name,
             "quality": quality,
             "display_name": display_name,
-            "title": source_name or display_name,
+            "title": display_name,
+            "original_title": source_name or display_name,
             "magnet": self._rename_magnet(magnet, display_name),
             "size": size,
             "page_url": url,
-            "year": meta.get("年 代") or "",
+            "year": year,
+            "is_tv": is_tv,
         }
 
     @staticmethod
@@ -346,8 +370,10 @@ class SixV(_PluginBase):
         results: List[TorrentInfo] = []
         for item in details:
             category = None
-            if MediaType is not None:
-                category = MediaType.TV if _TV_PATH_RE.search(item["page_url"]) else MediaType.MOVIE
+            if MediaType is not None and item.get("is_tv"):
+                category = MediaType.TV
+            elif MediaType is not None:
+                category = MediaType.MOVIE
             results.append(
                 TorrentInfo(
                     site_name="6V电影",
@@ -358,7 +384,7 @@ class SixV(_PluginBase):
                     site_downloader=None,
                     title=str(item["title"])[:200],
                     enclosure=item["magnet"],
-                    description=f"6v520: {item['name']} {item['quality']}".strip(),
+                    description=f"6v520: {item.get('original_title') or item['name']}".strip(),
                     size=item["size"],
                     seeders=0,
                     peers=0,
