@@ -15,6 +15,7 @@ import json
 import os
 import re
 import time
+import html as html_lib
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -50,6 +51,9 @@ class MikanAnime(_PluginBase):
     _max_results = 50
     _page_max_rows = 100
     _sort_by = "newest"
+    _fetch_full = False
+    _full_dedupe = True
+    _bangumi_limit = 3
     _timeout = 30
     _session: Optional[requests.Session] = None
 
@@ -61,6 +65,9 @@ class MikanAnime(_PluginBase):
             "max_results": 50,
             "page_max_rows": 100,
             "sort_by": "newest",
+            "fetch_full": False,
+            "full_dedupe": True,
+            "bangumi_limit": 3,
             "search_timeout": 30,
         }
 
@@ -98,6 +105,12 @@ class MikanAnime(_PluginBase):
         if sort_by not in {"newest", "oldest", "resolution", "size"}:
             sort_by = "newest"
         values["sort_by"] = sort_by
+        values["fetch_full"] = bool(values.get("fetch_full"))
+        values["full_dedupe"] = bool(values.get("full_dedupe", True))
+        try:
+            values["bangumi_limit"] = max(1, min(int(values.get("bangumi_limit") or 3), 10))
+        except (TypeError, ValueError):
+            values["bangumi_limit"] = 3
         values["enabled"] = bool(values.get("enabled"))
 
         self._enabled = values["enabled"]
@@ -105,6 +118,9 @@ class MikanAnime(_PluginBase):
         self._max_results = values["max_results"]
         self._page_max_rows = values["page_max_rows"]
         self._sort_by = values["sort_by"]
+        self._fetch_full = values["fetch_full"]
+        self._full_dedupe = values["full_dedupe"]
+        self._bangumi_limit = values["bangumi_limit"]
         self._timeout = values["search_timeout"]
         self._session = requests.Session()
         self._session.headers.update(
@@ -273,6 +289,121 @@ class MikanAnime(_PluginBase):
                 time.sleep(2)
         return []
 
+    @staticmethod
+    def _strip_tags(value: str) -> str:
+        return html_lib.unescape(re.sub(r"<[^>]+>", " ", value or "")).strip()
+
+    def _bangumi_titles(self, keyword: str) -> List[Tuple[str, str]]:
+        """用 Mikan HTML 搜索找到番剧条目（Bangumi ID + 番名）。"""
+        resp = self._session.get(
+            self._base_url + "/Home/Search",
+            params={"searchstr": keyword},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        text = resp.text or ""
+        norm_kw = self._normalize(keyword)
+        found: List[Tuple[str, str]] = []
+        seen = set()
+        for match in re.finditer(
+            r'<a[^>]+href=["\']?/Home/Bangumi/(\d+)[^>]*>(.*?)</a>',
+            text,
+            re.S | re.I,
+        ):
+            bangumi_id = match.group(1)
+            block = match.group(2)
+            if bangumi_id in seen:
+                continue
+            seen.add(bangumi_id)
+            title_match = re.search(r'title=["\']([^"\']+)["\']', block)
+            title = (
+                html_lib.unescape(title_match.group(1)).strip()
+                if title_match
+                else self._strip_tags(block)
+            )
+            if not title:
+                continue
+            norm_title = self._normalize(title)
+            if norm_kw and (norm_kw in norm_title or norm_title in norm_kw):
+                found.append((bangumi_id, title))
+        found.sort(key=lambda item: (0 if self._normalize(item[1]) == norm_kw else 1, len(item[1])))
+        return found[: self._bangumi_limit]
+
+    def _full_entries(self, keyword: str) -> List[Dict[str, Any]]:
+        """按番剧全集抓取：找到匹配的 Bangumi 后拉取该番剧的完整 RSS。"""
+        cache = getattr(self, "_site_cache", None)
+        if cache is None:
+            cache = self._site_cache = {}
+        cache_key = "full:" + keyword
+        now = time.monotonic()
+        cached = cache.get(cache_key)
+        if cached and now - cached[0] < 300:
+            return list(cached[1])
+
+        bangumis = self._bangumi_titles(keyword)
+        if not bangumis:
+            return self._entries(keyword)
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for bangumi_id, bangumi_title in bangumis:
+            try:
+                resp = self._session.get(
+                    self._base_url + "/RSS/Bangumi",
+                    params={"bangumiId": bangumi_id},
+                    timeout=self._timeout,
+                )
+                resp.raise_for_status()
+                payload = resp.text or ""
+            except Exception as err:  # noqa: BLE001
+                logger.warning(
+                    f"【{self.plugin_name}】抓取番剧 {bangumi_title}({bangumi_id}) RSS 失败：{err}"
+                )
+                continue
+            for item in self._parse_rss(payload):
+                url = item.get("magnet")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                entries.append(item)
+        if entries and self._full_dedupe:
+            # 整部番剧的 RSS 会包含同集数多个字幕组版本，默认每个集数只保留最佳版本
+            best_by_episode: Dict[int, Dict[str, Any]] = {}
+            batches: List[Dict[str, Any]] = []
+            for item in entries:
+                episode = int(item.get("episode") or -1)
+                if episode < 0:
+                    batches.append(item)
+                    continue
+                candidate_key = (
+                    int(item.get("resolution") or 0),
+                    item.get("pubdate") or "",
+                    int(item.get("size") or 0),
+                )
+                current = best_by_episode.get(episode)
+                if current is None:
+                    best_by_episode[episode] = item
+                    continue
+                current_key = (
+                    int(current.get("resolution") or 0),
+                    current.get("pubdate") or "",
+                    int(current.get("size") or 0),
+                )
+                if candidate_key > current_key:
+                    best_by_episode[episode] = item
+            if best_by_episode:
+                batches.sort(
+                    key=lambda item: (
+                        -int(item.get("resolution") or 0),
+                        -int(item.get("size") or 0),
+                        item.get("pubdate") or "",
+                    )
+                )
+                entries = list(best_by_episode.values()) + batches[:10]
+        if entries:
+            cache[cache_key] = (now, list(entries))
+            return entries
+        return self._entries(keyword)
+
     def _parse_rss(self, payload: str) -> List[Dict[str, Any]]:
         if not payload.strip():
             return []
@@ -339,13 +470,14 @@ class MikanAnime(_PluginBase):
     def _search(self, keyword: str, mtype: Any = None, page: int = 0) -> List[TorrentInfo]:
         if not self.get_state():
             return []
-        entries = self._entries(keyword)
+        entries = self._full_entries(keyword) if self._fetch_full else self._entries(keyword)
         if not entries:
             return []
-        normalized = self._normalize(keyword)
-        matched = [e for e in entries if normalized and normalized in self._normalize(e["title"])]
-        if matched:
-            entries = matched
+        if not self._fetch_full:
+            normalized = self._normalize(keyword)
+            matched = [e for e in entries if normalized and normalized in self._normalize(e["title"])]
+            if matched:
+                entries = matched
         entries = self._sort_entries(entries)[: self._max_results]
         if not entries:
             return []
@@ -448,6 +580,9 @@ class MikanAnime(_PluginBase):
             "max_results": self._max_results,
             "page_max_rows": self._page_max_rows,
             "sort_by": self._sort_by,
+            "fetch_full": self._fetch_full,
+            "full_dedupe": self._full_dedupe,
+            "bangumi_limit": self._bangumi_limit,
             "timeout": self._timeout,
         }
 
@@ -649,4 +784,58 @@ class MikanAnime(_PluginBase):
                 ],
             }
         ]
+        form[0]["content"].append(
+            {
+                "component": "VRow",
+                "content": [
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12, "md": 6},
+                        "content": [
+                            {
+                                "component": "VSwitch",
+                                "props": {
+                                    "model": "fetch_full",
+                                    "title": "按番剧全集抓取（搜索时抓取整部番剧所有集的种子，较慢）",
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12, "md": 6},
+                        "content": [
+                            {
+                                "component": "VTextField",
+                                "props": {
+                                    "model": "bangumi_limit",
+                                    "title": "全集抓取番剧数量（1-10，默认 3）",
+                                    "type": "number",
+                                },
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        form[0]["content"].append(
+            {
+                "component": "VRow",
+                "content": [
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12},
+                        "content": [
+                            {
+                                "component": "VSwitch",
+                                "props": {
+                                    "model": "full_dedupe",
+                                    "title": "全集抓取时每个集数只保留一个最佳版本（推荐开启）",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
         return form, self._defaults()
