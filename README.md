@@ -65,3 +65,8 @@ https://github.com/pandaria2012/jackett_extend
 ## 许可
 
 MIT
+
+## 附带插件：SixV（6v520）
+
+本仓库还包含 **SixV** 插件：把 6v520.cc 的搜索/磁力接入 MoviePilot，并把磁力链接的 dn 重写为规范影视名（解决原站 dn 是广告名的问题）。
+

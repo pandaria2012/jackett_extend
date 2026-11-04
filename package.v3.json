@@ -10,6 +10,17 @@
     "history": {
       "v1.0.0": "首版：Jackett 聚合搜索接入 MoviePilot 插件资源源；支持指定索引器、快速连接测试"
     }
+  },
+  "SixV": {
+    "name": "SixV",
+    "description": "6V电影（6v520.cc）资源源：站内搜索、磁力链接、按影视名重写种子显示名",
+    "labels": "6v,6v520,公开站,搜索,磁力",
+    "version": "1.0.0",
+    "icon": "6v.png",
+    "author": "pandaria2012",
+    "level": 0,
+    "history": {
+      "v1.0.0": "首版：6v520 搜索 + 磁力 dn 重命名为影视名"
+    }
   }
 }
-
