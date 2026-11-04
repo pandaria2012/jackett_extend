@@ -1,6 +1,6 @@
 {
-  "JackettSearch": {
-    "name": "JackettSearch",
+  "JackettExtend": {
+    "name": "JackettExtend",
     "description": "通过 Jackett 的公开/半公开/私有索引器扩展 MoviePilot 资源检索（插件资源源，不写站点表）",
     "labels": "索引器,Jackett,公开站,搜索",
     "version": "1.0.0",

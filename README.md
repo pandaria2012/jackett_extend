@@ -1,4 +1,4 @@
-# JackettSearch — MoviePilot v3 插件
+# JackettExtend — MoviePilot v3 插件
 
 把 **Jackett** 的公开/半公开/私有索引器接入 [MoviePilot](https://github.com/jxxghp/MoviePilot) v3 的搜索，
 作为「插件资源源」使用：**不写 MoviePilot 的站点表，不依赖 MoviePilot 的站点认证机制**。
@@ -29,7 +29,7 @@
 https://github.com/pandaria2012/jackett_extend
 ```
 
-更新插件列表后，找到 **JackettSearch** 安装即可（安装后可能需要重启 MoviePilot）。
+更新插件列表后，找到 **JackettExtend** 安装即可（安装后可能需要重启 MoviePilot）。
 
 ## 配置
 
@@ -41,7 +41,7 @@ https://github.com/pandaria2012/jackett_extend
 | Jackett 地址 | 例如 `http://192.168.1.10:9117` |
 | Jackett API Key | Jackett 首页顶部 API Key |
 
-也可以首次部署时在容器 `/config/jackett_search.json` 放默认配置（插件在无保存配置时读取）：
+也可以首次部署时在容器 `/config/jackett_extend.json` 放默认配置（插件在无保存配置时读取）：
 
 ```json
 {"enabled": true, "host": "http://192.168.1.10:9117", "api_key": "YOUR_JACKETT_API_KEY", "proxy": false, "search_timeout": 30}
@@ -65,4 +65,3 @@ https://github.com/pandaria2012/jackett_extend
 ## 许可
 
 MIT
-
