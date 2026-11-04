@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import urljoin
@@ -27,8 +28,9 @@ from app.plugins import _PluginBase
 from app.schemas.types import MediaSource
 
 _FALLBACK_CONFIG = "/config/jackett_extend.json"
-_MOVIE_CATS = list(range(2000, 3000))
-_TV_CATS = list(range(5000, 6000))
+# 只传 Jackett/Torznab 的父分类，避免几百个 Category 参数把 URL 撑爆（HTTP 414）
+_MOVIE_CATS = [2000]
+_TV_CATS = [5000]
 
 
 class JackettExtend(_PluginBase):
@@ -51,6 +53,7 @@ class JackettExtend(_PluginBase):
     _api_key = ""
     _use_proxy = False
     _timeout = 30
+    _indexers: List[str] = []
     _session: Optional[requests.Session] = None
 
     # ------------------------------------------------------------------ config
@@ -62,6 +65,8 @@ class JackettExtend(_PluginBase):
             "api_key": "",
             "proxy": False,
             "search_timeout": 30,
+            # 只查这些索引器，避免 Jackett /all 被慢站拖死（逗号分隔）
+            "indexers": "limetorrents,yts,thepiratebay",
         }
 
     def init_plugin(self, config: Optional[Mapping[str, Any]] = None) -> None:
@@ -91,6 +96,9 @@ class JackettExtend(_PluginBase):
             values["search_timeout"] = 30
         values["proxy"] = bool(values.get("proxy"))
         values["enabled"] = bool(values.get("enabled"))
+        indexers_text = str(values.get("indexers") or "").strip()
+        values["indexers"] = indexers_text
+        self._indexers = [item.strip() for item in indexers_text.split(",") if item.strip()]
 
         self._enabled = values["enabled"]
         self._host = host
@@ -108,6 +116,11 @@ class JackettExtend(_PluginBase):
             f"【{self.plugin_name}】初始化：enabled={self._enabled} host={self._host} "
             f"proxy={self._use_proxy}"
         )
+
+    def stop_service(self) -> None:
+        """插件停用/卸载时清理会话。"""
+        self._enabled = False
+        self._session = None
 
     def get_state(self) -> bool:
         return bool(self._enabled and self._host and self._api_key)
@@ -146,19 +159,22 @@ class JackettExtend(_PluginBase):
 
     # ------------------------------------------------------------------ search
     @staticmethod
-    def _parse_pubdate(value: Any) -> Optional[datetime]:
+    def _parse_pubdate(value: Any) -> Optional[str]:
+        """MoviePilot 响应模型要求 pubdate 是字符串，这里统一格式化。"""
         if not value or not isinstance(value, str):
             return None
         text = value.strip().replace("Z", "+00:00")
+        parsed: Optional[datetime] = None
         try:
-            return datetime.fromisoformat(text)
+            parsed = datetime.fromisoformat(text)
         except ValueError:
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
                 try:
-                    return datetime.strptime(text[:19], fmt)
+                    parsed = datetime.strptime(text[:19], fmt)
+                    break
                 except ValueError:
                     continue
-        return None
+        return parsed.strftime("%Y-%m-%d %H:%M:%S") if parsed else None
 
     @staticmethod
     def _infer_category(categories: Any) -> Any:
@@ -178,17 +194,29 @@ class JackettExtend(_PluginBase):
             return MediaType.TV
         return None
 
-    def _request_json(self, path: str, params: Dict[str, Any]) -> Any:
+    def _request_json(self, path: str, params: Dict[str, Any], timeout: Optional[float] = None) -> Any:
         url = self._host + path
         query = {"apikey": self._api_key, **params}
-        resp = self._session.get(url, params=query, timeout=self._timeout)
+        resp = self._session.get(url, params=query, timeout=timeout or self._timeout)
         resp.raise_for_status()
         return resp.json()
+
+    def _fetch_indexer(self, indexer: str, keyword: str, categories: List[int]) -> List[dict]:
+        """查询单个 Jackett 索引器（避免 /all 被慢站拖死）。"""
+        params: Dict[str, Any] = {"Query": keyword}
+        if categories:
+            params["Category"] = categories
+        data = self._request_json(
+            f"/api/v2.0/indexers/{indexer}/results",
+            params,
+            timeout=min(self._timeout, 12),
+        )
+        rows = data.get("Results") if isinstance(data, dict) else None
+        return rows if isinstance(rows, list) else []
 
     def _search(self, keyword: str, mtype: Any = None, page: int = 0) -> List[TorrentInfo]:
         if not self.get_state():
             return []
-        params: Dict[str, Any] = {"Query": keyword}
         categories: List[int] = []
         try:
             from app.schemas.types import MediaType
@@ -198,13 +226,20 @@ class JackettExtend(_PluginBase):
                 categories = _TV_CATS
         except Exception:  # noqa: BLE001
             categories = []
-        if categories:
-            params["Category"] = categories
-        # Jackett 的 /all 聚合接口；不同版本翻页参数不同，这里只做首页
-        data = self._request_json("/api/v2.0/indexers/all/results", params)
-        rows = data.get("Results") if isinstance(data, dict) else None
-        if not isinstance(rows, list):
-            return []
+
+        rows: List[dict] = []
+        indexers = self._indexers or ["limetorrents", "yts", "thepiratebay"]
+        with ThreadPoolExecutor(max_workers=min(6, max(1, len(indexers)))) as pool:
+            futures = {
+                pool.submit(self._fetch_indexer, indexer, keyword, categories): indexer
+                for indexer in indexers
+            }
+            for future in as_completed(futures, timeout=self._timeout):
+                indexer = futures[future]
+                try:
+                    rows.extend(future.result())
+                except Exception as err:  # noqa: BLE001
+                    logger.warning(f"【{self.plugin_name}】索引器 {indexer} 查询失败：{err}")
 
         results: List[TorrentInfo] = []
         seen = set()
@@ -222,7 +257,7 @@ class JackettExtend(_PluginBase):
             if key in seen:
                 continue
             seen.add(key)
-            categories = row.get("Category") or []
+            row_categories = row.get("Category") or []
             try:
                 size = int(row.get("Size") or 0)
             except (TypeError, ValueError):
@@ -247,7 +282,7 @@ class JackettExtend(_PluginBase):
                     media_source=MediaSource.IMDb if row.get("Imdb") else None,
                     media_id=row.get("Imdb") or None,
                     labels=[],
-                    category=self._infer_category(categories),
+                    category=self._infer_category(row_categories),
                     downloadvolumefactor=1.0,
                     uploadvolumefactor=1.0,
                 )
@@ -290,10 +325,11 @@ class JackettExtend(_PluginBase):
         if not self._host or not self._api_key:
             return False, "未配置 Jackett 地址或 API Key"
         try:
-            data = self._request_json("/api/v2.0/indexers/all/results", {"Query": "test"})
-            if isinstance(data, dict):
-                return True, "连接成功"
-            return False, "Jackett 返回格式异常"
+            # 只探测首页，避免 /all 聚合搜索被慢索引器拖到超时
+            resp = self._session.get(self._host + "/", timeout=min(self._timeout, 10))
+            if resp.status_code < 500:
+                return True, f"连接成功（HTTP {resp.status_code}）"
+            return False, f"Jackett 返回异常状态：HTTP {resp.status_code}"
         except Exception as err:  # noqa: BLE001
             return False, f"连接失败：{err}"
 
@@ -307,6 +343,7 @@ class JackettExtend(_PluginBase):
             "host": self._host,
             "configured": bool(self._host and self._api_key),
             "timeout": self._timeout,
+            "indexers": self._indexers,
         }
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -391,6 +428,24 @@ class JackettExtend(_PluginBase):
                                             "model": "api_key",
                                             "title": "Jackett API Key",
                                             "type": "password",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VTextField",
+                                        "props": {
+                                            "model": "indexers",
+                                            "title": "要查询的索引器（逗号分隔，如 limetorrents,yts,thepiratebay）",
                                         },
                                     }
                                 ],

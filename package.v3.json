@@ -8,7 +8,8 @@
     "author": "pandaria2012",
     "level": 0,
     "history": {
-      "v1.0.0": "首版：将 Jackett /api/v2.0/indexers/all/results 聚合搜索接入 MoviePilot 插件资源源"
+      "v1.0.0": "首版：Jackett 聚合搜索接入 MoviePilot 插件资源源；支持指定索引器、快速连接测试"
     }
   }
 }
+
