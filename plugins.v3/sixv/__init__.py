@@ -67,7 +67,7 @@ class SixV(_PluginBase):
         return {
             "enabled": False,
             "base_url": "https://www.6v520.cc",
-            "max_results": 20,
+            "max_results": 50,
             "rename": True,
             "search_timeout": 30,
         }
@@ -91,9 +91,9 @@ class SixV(_PluginBase):
             base_url = "https://" + base_url
         values["base_url"] = base_url or "https://www.6v520.cc"
         try:
-            values["max_results"] = max(1, min(int(values.get("max_results") or 20), 50))
+            values["max_results"] = max(1, min(int(values.get("max_results") or 50), 300))
         except (TypeError, ValueError):
-            values["max_results"] = 20
+            values["max_results"] = 50
         try:
             values["search_timeout"] = max(5, min(int(values.get("search_timeout") or 30), 120))
         except (TypeError, ValueError):
@@ -550,6 +550,24 @@ class SixV(_PluginBase):
         )
         details = details[: self._max_results]
         self._record_pan_links(all_pan)
+        if details:
+            try:
+                self.save_data(
+                    "search_results",
+                    [
+                        {
+                            "title": item.get("display_name", ""),
+                            "label": item.get("quality", ""),
+                            "size": item.get("size", 0),
+                            "magnet": item.get("magnet", ""),
+                            "page_url": item.get("page_url", ""),
+                        }
+                        for item in details
+                    ],
+                )
+                self.save_data("search_keyword", keyword)
+            except Exception as err:  # noqa: BLE001
+                logger.warning(f"【{self.plugin_name}】保存最近搜索结果失败：{err}")
         if not details:
             return []
 
@@ -674,7 +692,7 @@ class SixV(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VTextField",
-                                        "props": {"model": "max_results", "title": "每次最多返回条数（1-50，追番可调大）", "type": "number"},
+                                        "props": {"model": "max_results", "title": "每次最多返回条数（1-300，追番可调大）", "type": "number"},
                                     }
                                 ],
                             },
@@ -717,7 +735,9 @@ class SixV(_PluginBase):
 
     def get_page(self) -> Optional[List[dict]]:
         pan_links = self.get_data("pan_links") or []
-        if not pan_links:
+        search_results = self.get_data("search_results") or []
+        keyword = self.get_data("search_keyword") or ""
+        if not pan_links and not search_results:
             return [
                 {
                     "component": "VAlert",
@@ -725,69 +745,158 @@ class SixV(_PluginBase):
                         "type": "info",
                         "variant": "tonal",
                         "prepend-icon": "mdi-information",
-                        "text": "暂无网盘链接。触发一次 SixV 搜索/订阅后，这里会收集 1080p/4K 的迅雷/夸克/百度网盘链接，方便手动转存。",
+                        "text": "还没有数据。先在 MoviePilot 搜索一部 6V 上的片名/剧名，SixV 会记录最近一次搜索结果和 1080p/4K 网盘链接，再回到本页面查看。",
                     },
                 }
             ]
-        rows = []
-        for item in pan_links[:100]:
-            rows.append(
+        page: List[dict] = []
+
+        def size_text(value: Any) -> str:
+            try:
+                size = int(value or 0)
+            except (TypeError, ValueError):
+                return "未知"
+            return f"{size / 1024 / 1024 / 1024:.2f} GB" if size > 0 else "未知"
+
+        if search_results:
+            page.append(
                 {
-                    "component": "tr",
+                    "component": "VAlert",
+                    "props": {
+                        "type": "info",
+                        "variant": "tonal",
+                        "prepend-icon": "mdi-magnet",
+                        "text": f"最近搜索：{keyword}，共 {len(search_results)} 条种子（展示前 100 条，最新一集在前，页面可滚动）。",
+                    },
+                }
+            )
+            rows = []
+            for item in search_results[:100]:
+                rows.append(
+                    {
+                        "component": "tr",
+                        "content": [
+                            {"component": "td", "text": str(item.get("title", ""))[:80]},
+                            {"component": "td", "text": item.get("label", "") or "-"},
+                            {"component": "td", "text": size_text(item.get("size"))},
+                            {
+                                "component": "td",
+                                "content": [
+                                    {
+                                        "component": "VBtn",
+                                        "props": {
+                                            "href": item.get("magnet", ""),
+                                            "size": "x-small",
+                                            "variant": "text",
+                                            "color": "primary",
+                                        },
+                                        "text": "磁力",
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "td",
+                                "content": [
+                                    {
+                                        "component": "VBtn",
+                                        "props": {
+                                            "href": item.get("page_url", ""),
+                                            "target": "_blank",
+                                            "size": "x-small",
+                                            "variant": "text",
+                                        },
+                                        "text": "6V页面",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                )
+            page.append(
+                {
+                    "component": "VTable",
+                    "props": {"hover": True, "density": "compact"},
                     "content": [
-                        {"component": "td", "text": str(item.get("title", ""))[:60]},
-                        {"component": "td", "text": item.get("quality", "") or "未知"},
-                        {"component": "td", "text": item.get("pan_type", "")},
                         {
-                            "component": "td",
+                            "component": "thead",
                             "content": [
                                 {
-                                    "component": "VBtn",
-                                    "props": {
-                                        "href": item.get("url", ""),
-                                        "target": "_blank",
-                                        "size": "x-small",
-                                        "variant": "text",
-                                        "color": "primary",
-                                    },
-                                    "text": "打开",
+                                    "component": "tr",
+                                    "content": [
+                                        {"component": "th", "text": title}
+                                        for title in ("片名", "集数/画质", "大小", "种子", "来源")
+                                    ],
                                 }
                             ],
                         },
-                        {"component": "td", "text": item.get("code", "") or "-"},
+                        {"component": "tbody", "content": rows},
                     ],
                 }
             )
-        return [
-            {
-                "component": "VAlert",
-                "props": {
-                    "type": "info",
-                    "variant": "tonal",
-                    "prepend-icon": "mdi-cloud-download",
-                    "text": f"最近收集到 {len(pan_links)} 条网盘链接（最多展示 100 条），来自 6v520 详情页，仅用于手动转存。",
-                },
-            },
-            {
-                "component": "VTable",
-                "props": {"hover": True},
-                "content": [
-                    {
-                        "component": "thead",
-                        "content": [
-                            {
-                                "component": "tr",
-                                "content": [
-                                    {"component": "th", "text": title}
-                                    for title in ("片名", "画质", "网盘", "链接", "提取码")
-                                ],
-                            }
-                        ],
+
+        if pan_links:
+            page.append(
+                {
+                    "component": "VAlert",
+                    "props": {
+                        "type": "info",
+                        "variant": "tonal",
+                        "prepend-icon": "mdi-cloud-download",
+                        "text": f"最近收集到 {len(pan_links)} 条网盘链接（最多展示 100 条），来自 6v520 详情页，仅用于手动转存。",
                     },
-                    {"component": "tbody", "content": rows},
-                ],
-            },
-        ]
+                }
+            )
+            rows = []
+            for item in pan_links[:100]:
+                rows.append(
+                    {
+                        "component": "tr",
+                        "content": [
+                            {"component": "td", "text": str(item.get("title", ""))[:60]},
+                            {"component": "td", "text": item.get("quality", "") or "未知"},
+                            {"component": "td", "text": item.get("pan_type", "")},
+                            {
+                                "component": "td",
+                                "content": [
+                                    {
+                                        "component": "VBtn",
+                                        "props": {
+                                            "href": item.get("url", ""),
+                                            "target": "_blank",
+                                            "size": "x-small",
+                                            "variant": "text",
+                                            "color": "primary",
+                                        },
+                                        "text": "打开",
+                                    }
+                                ],
+                            },
+                            {"component": "td", "text": item.get("code", "") or "-"},
+                        ],
+                    }
+                )
+            page.append(
+                {
+                    "component": "VTable",
+                    "props": {"hover": True, "density": "compact"},
+                    "content": [
+                        {
+                            "component": "thead",
+                            "content": [
+                                {
+                                    "component": "tr",
+                                    "content": [
+                                        {"component": "th", "text": title}
+                                        for title in ("片名", "画质", "网盘", "链接", "提取码")
+                                    ],
+                                }
+                            ],
+                        },
+                        {"component": "tbody", "content": rows},
+                    ],
+                }
+            )
+        return page
 
     def api_pan_links(self) -> Dict[str, Any]:
         return {"success": True, "data": self.get_data("pan_links") or []}
