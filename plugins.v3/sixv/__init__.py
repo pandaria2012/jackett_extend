@@ -67,7 +67,7 @@ class SixV(_PluginBase):
         return {
             "enabled": False,
             "base_url": "https://www.6v520.cc",
-            "max_results": 10,
+            "max_results": 20,
             "rename": True,
             "search_timeout": 30,
         }
@@ -91,9 +91,9 @@ class SixV(_PluginBase):
             base_url = "https://" + base_url
         values["base_url"] = base_url or "https://www.6v520.cc"
         try:
-            values["max_results"] = max(1, min(int(values.get("max_results") or 10), 30))
+            values["max_results"] = max(1, min(int(values.get("max_results") or 20), 50))
         except (TypeError, ValueError):
-            values["max_results"] = 10
+            values["max_results"] = 20
         try:
             values["search_timeout"] = max(5, min(int(values.get("search_timeout") or 30), 120))
         except (TypeError, ValueError):
@@ -154,6 +154,13 @@ class SixV(_PluginBase):
                 "auth": "apikey",
                 "summary": "查询 SixV 状态",
             },
+            {
+                "path": "/pan_links",
+                "endpoint": self.api_pan_links,
+                "methods": ["GET"],
+                "auth": "apikey",
+                "summary": "查询最近收集到的网盘链接",
+            },
         ]
 
     # ------------------------------------------------------------------ helpers
@@ -165,6 +172,108 @@ class SixV(_PluginBase):
     def _clean_filename(value: str) -> str:
         value = re.sub(r'[\\/:*?"<>|\r\n\t]', " ", value or "")
         return re.sub(r"\s+", " ", value).strip(" .")
+
+    @staticmethod
+    def _normalize_title(value: str) -> str:
+        value = html_lib.unescape(value or "")
+        value = re.sub(r"[《》]", "", value)
+        value = re.sub(r"(?:19|20)\d{2}", "", value)
+        value = re.sub(r"[\s：:、，,。.！!？?\-—_/（）()\[\]【】]+", "", value)
+        return value.casefold()
+
+    @classmethod
+    def _title_matches(cls, keyword: str, result_title: str) -> bool:
+        """严格片名匹配：只保留《片名》与关键词完全一致的结果。"""
+        m = re.search(r"《([^》]+)》", result_title or "")
+        name = m.group(1) if m else (result_title or "")
+        norm_kw = cls._normalize_title(keyword)
+        norm_name = cls._normalize_title(name)
+        return bool(norm_kw and norm_name and norm_kw == norm_name)
+
+    @staticmethod
+    def _episode_number(label: str) -> int:
+        """从“01-08 / 第07集 / S01E05-06 / 177-178”里取最大集数，用于最新一集优先。"""
+        if not label:
+            return -1
+        numbers: List[int] = []
+        for m in re.finditer(
+            r"(?:第\s*|S\d+E|E)(\d{1,4})(?:\s*-\s*(?:E|第)?\s*(\d{1,4}))?",
+            label,
+            re.I,
+        ):
+            numbers.extend(int(g) for g in m.groups() if g and str(g).isdigit())
+        if not numbers:
+            for m in re.finditer(
+                r"(?<![\dA-Za-z])(\d{1,4})(?:\s*-\s*(\d{1,4}))?(?![\dA-Za-z])",
+                label,
+            ):
+                numbers.extend(int(g) for g in m.groups() if g and str(g).isdigit())
+        return max(numbers) if numbers else -1
+
+    @staticmethod
+    def _resolution_rank(label: str) -> int:
+        text = (label or "").lower()
+        if "2160" in text or "4k" in text:
+            return 3
+        if "1080" in text:
+            return 2
+        if "720" in text:
+            return 1
+        return 0
+
+    def _parse_pan_links(self, text: str, name: str, page_url: str) -> List[Dict[str, Any]]:
+        """解析详情页里的迅雷/夸克/百度网盘链接，供插件页面展示。"""
+        links: List[Dict[str, Any]] = []
+        seen = set()
+        pattern = re.compile(
+            r'<a[^>]+href=["\'](https?://(?:pan\.xunlei\.com|pan\.quark\.cn|pan\.baidu\.com)/[^"\']+)["\'][^>]*>(.*?)</a>',
+            re.S | re.I,
+        )
+        for m in pattern.finditer(text):
+            url = html_lib.unescape(m.group(1)).strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            context = html_lib.unescape(
+                re.sub(r"<[^>]+>", " ", text[max(0, m.start() - 800): m.start()])
+            )
+            qualities = re.findall(r"(2160p|4k|1080p|720p)", context, re.I)
+            quality = (qualities[-1] if qualities else "").lower() or "未知"
+            after = html_lib.unescape(
+                re.sub(r"<[^>]+>", " ", text[m.end(): m.end() + 400])
+            )
+            code_match = re.search(r"提取码[：:]\s*([a-zA-Z0-9]{4})", after)
+            if not code_match:
+                code_match = re.search(r"提取码[：:]\s*([a-zA-Z0-9]{4})", context)
+            pan_type = "迅雷" if "xunlei" in url else "夸克" if "quark" in url else "百度"
+            code_value = code_match.group(1) if (pan_type == "百度" and code_match) else ""
+            links.append(
+                {
+                    "title": name,
+                    "quality": quality,
+                    "pan_type": pan_type,
+                    "url": url,
+                    "code": code_value,
+                    "page_url": page_url,
+                }
+            )
+        return links
+
+    def _record_pan_links(self, links: List[Dict[str, Any]]) -> None:
+        if not links:
+            return
+        try:
+            existing = self.get_data("pan_links") or []
+        except Exception:  # noqa: BLE001
+            existing = []
+        existing = [item for item in existing if isinstance(item, dict) and item.get("url")]
+        known = {item.get("url") for item in links}
+        merged = list(links) + [item for item in existing if item.get("url") not in known]
+        merged = merged[:200]
+        try:
+            self.save_data("pan_links", merged)
+        except Exception as err:  # noqa: BLE001
+            logger.warning(f"【{self.plugin_name}】保存网盘链接失败：{err}")
 
     @staticmethod
     def _parse_pubdate(value: Any) -> Optional[str]:
@@ -272,7 +381,7 @@ class SixV(_PluginBase):
                 time.sleep(3)
         return []
 
-    def _detail(self, url: str) -> List[Dict[str, Any]]:
+    def _detail(self, url: str) -> Dict[str, Any]:
         resp = self._session.get(url, timeout=self._timeout)
         resp.encoding = "gb18030"
         text = resp.text or ""
@@ -300,7 +409,7 @@ class SixV(_PluginBase):
         name = self._clean_filename(name) or self._clean_filename(page_title)
         quality = self._clean_filename(quality)
         if not name:
-            return []
+            return {"torrents": [], "pan_links": []}
 
         is_tv = bool(_TV_PATH_RE.search(url))
         year = ""
@@ -371,7 +480,18 @@ class SixV(_PluginBase):
                     "is_tv": is_tv,
                 }
             )
-        return entries
+        # 最新一集优先；同集数时高分辨率优先
+        entries.sort(
+            key=lambda item: (
+                -self._episode_number(item.get("quality", "")),
+                -self._resolution_rank(item.get("quality", "") or item.get("display_name", "")),
+                item.get("display_name", ""),
+            )
+        )
+        return {
+            "torrents": entries,
+            "pan_links": self._parse_pan_links(text, name, url),
+        }
 
     @staticmethod
     def _match_path(url: str, mtype: Any) -> bool:
@@ -398,25 +518,38 @@ class SixV(_PluginBase):
         if not items:
             return []
         items = [item for item in items if self._match_path(item[0], mtype)]
-        # 先按标题关键字过滤，避免搜索把无关内容带进来
-        normalized = keyword.strip().lower()
-        filtered = [item for item in items if normalized and normalized in item[1].lower()]
-        if filtered:
-            items = filtered
+        # 严格片名过滤：避免“爸爸”带出“假爸爸”“燃烧吧！爸爸”这类误匹配
+        strict_items = [item for item in items if self._title_matches(keyword, item[1])]
+        if strict_items:
+            items = strict_items
+        else:
+            logger.info(f"【{self.plugin_name}】{keyword!r} 没有精确片名匹配，跳过")
+            return []
         items = items[: max(self._max_results * 2, self._max_results)]
 
         details: List[Dict[str, Any]] = []
+        all_pan: List[Dict[str, Any]] = []
         with ThreadPoolExecutor(max_workers=min(6, max(1, len(items)))) as pool:
             futures = {pool.submit(self._detail, url): url for url, _ in items}
             for future in as_completed(futures, timeout=self._timeout):
                 try:
-                    item = future.result()
+                    result = future.result()
                 except Exception as err:  # noqa: BLE001
                     logger.warning(f"【{self.plugin_name}】详情页解析失败：{err}")
                     continue
-                if item:
-                    details.extend(item[: self._max_results])
+                if isinstance(result, dict):
+                    details.extend(result.get("torrents") or [])
+                    all_pan.extend(result.get("pan_links") or [])
+        # 最新一集优先，其次高分辨率优先
+        details.sort(
+            key=lambda item: (
+                -self._episode_number(item.get("quality", "")),
+                -self._resolution_rank(item.get("quality", "") or item.get("display_name", "")),
+                item.get("display_name", ""),
+            )
+        )
         details = details[: self._max_results]
+        self._record_pan_links(all_pan)
         if not details:
             return []
 
@@ -541,7 +674,7 @@ class SixV(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VTextField",
-                                        "props": {"model": "max_results", "title": "每次最多返回条数", "type": "number"},
+                                        "props": {"model": "max_results", "title": "每次最多返回条数（1-50，追番可调大）", "type": "number"},
                                     }
                                 ],
                             },
@@ -583,4 +716,78 @@ class SixV(_PluginBase):
         return form, self._defaults()
 
     def get_page(self) -> Optional[List[dict]]:
-        return None
+        pan_links = self.get_data("pan_links") or []
+        if not pan_links:
+            return [
+                {
+                    "component": "VAlert",
+                    "props": {
+                        "type": "info",
+                        "variant": "tonal",
+                        "prepend-icon": "mdi-information",
+                        "text": "暂无网盘链接。触发一次 SixV 搜索/订阅后，这里会收集 1080p/4K 的迅雷/夸克/百度网盘链接，方便手动转存。",
+                    },
+                }
+            ]
+        rows = []
+        for item in pan_links[:100]:
+            rows.append(
+                {
+                    "component": "tr",
+                    "content": [
+                        {"component": "td", "text": str(item.get("title", ""))[:60]},
+                        {"component": "td", "text": item.get("quality", "") or "未知"},
+                        {"component": "td", "text": item.get("pan_type", "")},
+                        {
+                            "component": "td",
+                            "content": [
+                                {
+                                    "component": "VBtn",
+                                    "props": {
+                                        "href": item.get("url", ""),
+                                        "target": "_blank",
+                                        "size": "x-small",
+                                        "variant": "text",
+                                        "color": "primary",
+                                    },
+                                    "text": "打开",
+                                }
+                            ],
+                        },
+                        {"component": "td", "text": item.get("code", "") or "-"},
+                    ],
+                }
+            )
+        return [
+            {
+                "component": "VAlert",
+                "props": {
+                    "type": "info",
+                    "variant": "tonal",
+                    "prepend-icon": "mdi-cloud-download",
+                    "text": f"最近收集到 {len(pan_links)} 条网盘链接（最多展示 100 条），来自 6v520 详情页，仅用于手动转存。",
+                },
+            },
+            {
+                "component": "VTable",
+                "props": {"hover": True},
+                "content": [
+                    {
+                        "component": "thead",
+                        "content": [
+                            {
+                                "component": "tr",
+                                "content": [
+                                    {"component": "th", "text": title}
+                                    for title in ("片名", "画质", "网盘", "链接", "提取码")
+                                ],
+                            }
+                        ],
+                    },
+                    {"component": "tbody", "content": rows},
+                ],
+            },
+        ]
+
+    def api_pan_links(self) -> Dict[str, Any]:
+        return {"success": True, "data": self.get_data("pan_links") or []}
