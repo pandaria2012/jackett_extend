@@ -702,14 +702,14 @@ class SixV(_PluginBase):
                                 "component": "VCol",
                                 "props": {"cols": 12, "md": 4},
                                 "content": [
-                                    {"component": "VSwitch", "props": {"model": "enabled", "title": "启用插件"}}
+                                    {"component": "VSwitch", "props": {"model": "enabled", "label": "启用插件"}}
                                 ],
                             },
                             {
                                 "component": "VCol",
                                 "props": {"cols": 12, "md": 4},
                                 "content": [
-                                    {"component": "VSwitch", "props": {"model": "rename", "title": "重命名种子显示名"}}
+                                    {"component": "VSwitch", "props": {"model": "rename", "label": "重命名种子显示名"}}
                                 ],
                             },
                             {
@@ -718,7 +718,7 @@ class SixV(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VTextField",
-                                        "props": {"model": "max_results", "title": "每次最多返回条数（1-300，追番可调大）", "type": "number"},
+                                        "props": {"model": "max_results", "label": "每次最多返回条数（1-300，追番可调大）", "type": "number"},
                                     }
                                 ],
                             },
@@ -733,7 +733,7 @@ class SixV(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VTextField",
-                                        "props": {"model": "base_url", "title": "站点地址，如 https://www.6v520.cc"},
+                                        "props": {"model": "base_url", "label": "站点地址，如 https://www.6v520.cc"},
                                     }
                                 ],
                             }
@@ -748,7 +748,7 @@ class SixV(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VTextField",
-                                        "props": {"model": "search_timeout", "title": "搜索超时（秒）", "type": "number"},
+                                        "props": {"model": "search_timeout", "label": "搜索超时（秒）", "type": "number"},
                                     }
                                 ],
                             }
@@ -770,7 +770,7 @@ class SixV(_PluginBase):
                                     "component": "VSelect",
                                     "props": {
                                         "model": "sort_by",
-                                        "title": "搜索结果排序",
+                                        "label": "搜索结果排序",
                                         "items": [
                                             {"title": "最新集数优先", "value": "newest"},
                                             {"title": "最早集数优先", "value": "oldest"},
@@ -789,7 +789,7 @@ class SixV(_PluginBase):
                                     "component": "VTextField",
                                     "props": {
                                         "model": "page_max_rows",
-                                        "title": "插件页面展示行数（1-300）",
+                                        "label": "插件页面展示行数（1-300）",
                                         "type": "number",
                                     },
                                 }

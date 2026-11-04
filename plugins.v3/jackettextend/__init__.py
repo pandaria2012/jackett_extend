@@ -361,7 +361,7 @@ class JackettExtend(_PluginBase):
                                         "component": "VSwitch",
                                         "props": {
                                             "model": "enabled",
-                                            "title": "启用插件",
+                                            "label": "启用插件",
                                         },
                                     }
                                 ],
@@ -374,7 +374,7 @@ class JackettExtend(_PluginBase):
                                         "component": "VSwitch",
                                         "props": {
                                             "model": "proxy",
-                                            "title": "使用 MoviePilot 代理访问 Jackett",
+                                            "label": "使用 MoviePilot 代理访问 Jackett",
                                         },
                                     }
                                 ],
@@ -387,7 +387,7 @@ class JackettExtend(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "search_timeout",
-                                            "title": "搜索超时（秒）",
+                                            "label": "搜索超时（秒）",
                                             "type": "number",
                                         },
                                     }
@@ -406,7 +406,7 @@ class JackettExtend(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "host",
-                                            "title": "Jackett 地址（如 http://192.168.50.103:9117）",
+                                            "label": "Jackett 地址（如 http://192.168.50.103:9117）",
                                         },
                                     }
                                 ],
@@ -424,7 +424,7 @@ class JackettExtend(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "api_key",
-                                            "title": "Jackett API Key",
+                                            "label": "Jackett API Key",
                                             "type": "password",
                                         },
                                     }
@@ -443,7 +443,7 @@ class JackettExtend(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "indexers",
-                                            "title": "要查询的索引器（逗号分隔，如 limetorrents,yts,thepiratebay）",
+                                            "label": "要查询的索引器（逗号分隔，如 limetorrents,yts,thepiratebay）",
                                         },
                                     }
                                 ],

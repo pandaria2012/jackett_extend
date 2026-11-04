@@ -696,7 +696,7 @@ class MikanAnime(_PluginBase):
                                 "component": "VCol",
                                 "props": {"cols": 12, "md": 4},
                                 "content": [
-                                    {"component": "VSwitch", "props": {"model": "enabled", "title": "启用插件"}}
+                                    {"component": "VSwitch", "props": {"model": "enabled", "label": "启用插件"}}
                                 ],
                             },
                             {
@@ -707,7 +707,7 @@ class MikanAnime(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "max_results",
-                                            "title": "每次最多返回条数（1-300）",
+                                            "label": "每次最多返回条数（1-300）",
                                             "type": "number",
                                         },
                                     }
@@ -721,7 +721,7 @@ class MikanAnime(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "page_max_rows",
-                                            "title": "插件页面展示行数（1-300）",
+                                            "label": "插件页面展示行数（1-300）",
                                             "type": "number",
                                         },
                                     }
@@ -740,7 +740,7 @@ class MikanAnime(_PluginBase):
                                         "component": "VSelect",
                                         "props": {
                                             "model": "sort_by",
-                                            "title": "搜索结果排序",
+                                            "label": "搜索结果排序",
                                             "items": [
                                                 {"title": "最新集数优先", "value": "newest"},
                                                 {"title": "最早集数优先", "value": "oldest"},
@@ -759,7 +759,7 @@ class MikanAnime(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "base_url",
-                                            "title": "站点地址（默认 https://mikan.tangbai.cc）",
+                                            "label": "站点地址（默认 https://mikan.tangbai.cc）",
                                         },
                                     }
                                 ],
@@ -777,7 +777,7 @@ class MikanAnime(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "search_timeout",
-                                            "title": "搜索超时（秒）",
+                                            "label": "搜索超时（秒）",
                                             "type": "number",
                                         },
                                     }
@@ -800,7 +800,7 @@ class MikanAnime(_PluginBase):
                                 "component": "VSwitch",
                                 "props": {
                                     "model": "fetch_full",
-                                    "title": "按番剧全集抓取（搜索时抓取整部番剧所有集的种子，较慢）",
+                                    "label": "按番剧全集抓取（搜索时抓取整部番剧所有集的种子，较慢）",
                                 },
                             }
                         ],
@@ -813,7 +813,7 @@ class MikanAnime(_PluginBase):
                                 "component": "VTextField",
                                 "props": {
                                     "model": "bangumi_limit",
-                                    "title": "全集抓取番剧数量（1-10，默认 3）",
+                                    "label": "全集抓取番剧数量（1-10，默认 3）",
                                     "type": "number",
                                 },
                             }
@@ -834,7 +834,7 @@ class MikanAnime(_PluginBase):
                                 "component": "VSwitch",
                                 "props": {
                                     "model": "full_dedupe",
-                                    "title": "全集抓取时每个集数只保留一个最佳版本（推荐开启）",
+                                    "label": "全集抓取时每个集数只保留一个最佳版本（推荐开启）",
                                 },
                             }
                         ],
