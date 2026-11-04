@@ -192,8 +192,22 @@ class SixV(_PluginBase):
         return f"{magnet}{sep}dn={encoded}"
 
     # ------------------------------------------------------------------ search
-    def _search_site(self, keyword: str) -> List[Tuple[str, str]]:
-        """站内搜索，返回 [(详情URL, 搜索结果标题)]。"""
+    @staticmethod
+    def _keyword_variants(keyword: str) -> List[str]:
+        """站点搜索对中文标点较敏感，生成几个降级关键词。"""
+        variants = [keyword.strip()]
+        cleaned = re.sub(r"[：:、，,。.！!？?\-—_/]+", " ", keyword)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if cleaned and cleaned not in variants:
+            variants.append(cleaned)
+        parts = [p.strip() for p in re.split(r"[：:]", keyword) if p.strip()]
+        for part in sorted(parts, key=len, reverse=True):
+            if part not in variants:
+                variants.append(part)
+        return [v for v in variants if v]
+
+    def _search_site_once(self, keyword: str) -> List[Tuple[str, str]]:
+        """单次站内搜索，返回 [(详情URL, 搜索结果标题)]。"""
         body = (
             "show=title%2Csmalltext&tempid=1&tbname=article&keyboard="
             + quote(keyword.encode("gb18030", errors="ignore"))
@@ -234,7 +248,31 @@ class SixV(_PluginBase):
             items.append((url, title))
         return items
 
-    def _detail(self, url: str) -> Optional[Dict[str, Any]]:
+    def _search_site(self, keyword: str) -> List[Tuple[str, str]]:
+        cache = getattr(self, "_site_cache", None)
+        if cache is None:
+            cache = self._site_cache = {}
+        now = time.monotonic()
+        cached = cache.get(keyword)
+        if cached and now - cached[0] < 300:
+            return list(cached[1])
+        variants = self._keyword_variants(keyword)
+        for attempt in range(2):
+            for variant in variants:
+                try:
+                    items = self._search_site_once(variant)
+                except Exception as err:  # noqa: BLE001
+                    logger.warning(f"【{self.plugin_name}】站内搜索失败：{err}")
+                    items = []
+                if items:
+                    cache[keyword] = (now, list(items))
+                    return items
+            if attempt == 0:
+                # 站点有搜索频率限制，稍等后重试一次
+                time.sleep(3)
+        return []
+
+    def _detail(self, url: str) -> List[Dict[str, Any]]:
         resp = self._session.get(url, timeout=self._timeout)
         resp.encoding = "gb18030"
         text = resp.text or ""
@@ -249,15 +287,6 @@ class SixV(_PluginBase):
             if m:
                 meta[field] = self._strip_tags(m.group(1))[:120]
 
-        magnets = [html_lib.unescape(x) for x in re.findall(r'magnet:\?[^"\'<>\s]+', text)]
-        if not magnets:
-            return None
-        magnet = magnets[0]
-        query = self._magnet_query(magnet)
-        btih = query.get("xt") or ""
-        if not btih:
-            return None
-
         source_name = h1 or page_title
         suffix = ""
         m = re.search(r"《([^》]+)》", source_name)
@@ -271,9 +300,8 @@ class SixV(_PluginBase):
         name = self._clean_filename(name) or self._clean_filename(page_title)
         quality = self._clean_filename(quality)
         if not name:
-            return None
+            return []
 
-        # 组装规范显示名：影视名 + 年份 + 剧集/画质
         is_tv = bool(_TV_PATH_RE.search(url))
         year = ""
         year_match = re.search(r"((?:19|20)\d{2})", meta.get("年 代") or "")
@@ -288,32 +316,62 @@ class SixV(_PluginBase):
                 episode = f"S01E{begin:02d}" + (f"-E{end:02d}" if end != begin else "")
             elif "全集" in suffix:
                 episode = "Complete"
-        if is_tv:
-            tail = episode or suffix or quality
-        else:
-            tail = quality or suffix
-        pieces = [piece for piece in (name, year, tail) if piece]
-        display_name = ".".join(pieces)
-        if not self._rename:
-            display_name = ".".join(piece for piece in (name, year, episode) if piece)
 
-        size = 0
-        try:
-            size = int(query.get("xl") or 0)
-        except (TypeError, ValueError):
+        # 详情页可能有多条磁力（分集/分版本），按 <a href="magnet:..."> 文本标签逐条解析
+        def clean_label(value: str) -> str:
+            value = self._clean_filename(self._strip_tags(value))
+            value = re.sub(r"\.(mkv|mp4|avi|ts|m2ts|rmvb|wmv)$", "", value, flags=re.I)
+            value = re.sub(
+                r"(6v电影|6v123|66影视|地址发布页|收藏不迷路).*$", "", value, flags=re.I
+            )
+            return value.strip(" .-_")
+
+        entries: List[Dict[str, Any]] = []
+        seen = set()
+        for anchor in re.finditer(
+            r'<a[^>]+href=["\'](magnet:[^"\']+)["\'][^>]*>(.*?)</a>',
+            text,
+            re.S | re.I,
+        ):
+            magnet = html_lib.unescape(anchor.group(1)).strip()
+            query = self._magnet_query(magnet)
+            btih = query.get("xt") or ""
+            if not btih or btih in seen:
+                continue
+            seen.add(btih)
+            label = clean_label(anchor.group(2))
+            if label.startswith(name):
+                label = label[len(name):].lstrip(" .-_")
+            if not label:
+                label = episode or quality or suffix
+            parts = [name]
+            if year:
+                parts.append(year)
+            if label:
+                parts.append(label)
+            display_name = ".".join(piece for piece in parts if piece)
+            if not self._rename:
+                display_name = ".".join(piece for piece in (name, year, episode) if piece)
             size = 0
-        return {
-            "name": name,
-            "quality": quality,
-            "display_name": display_name,
-            "title": display_name,
-            "original_title": source_name or display_name,
-            "magnet": self._rename_magnet(magnet, display_name),
-            "size": size,
-            "page_url": url,
-            "year": year,
-            "is_tv": is_tv,
-        }
+            try:
+                size = int(query.get("xl") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            entries.append(
+                {
+                    "name": name,
+                    "quality": label,
+                    "display_name": display_name,
+                    "title": display_name,
+                    "original_title": source_name or display_name,
+                    "magnet": self._rename_magnet(magnet, display_name),
+                    "size": size,
+                    "page_url": url,
+                    "year": year,
+                    "is_tv": is_tv,
+                }
+            )
+        return entries
 
     @staticmethod
     def _match_path(url: str, mtype: Any) -> bool:
@@ -357,7 +415,7 @@ class SixV(_PluginBase):
                     logger.warning(f"【{self.plugin_name}】详情页解析失败：{err}")
                     continue
                 if item:
-                    details.append(item)
+                    details.extend(item[: self._max_results])
         details = details[: self._max_results]
         if not details:
             return []
