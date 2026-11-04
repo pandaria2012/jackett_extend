@@ -303,7 +303,8 @@ class MikanAnime(_PluginBase):
         resp.raise_for_status()
         text = resp.text or ""
         norm_kw = self._normalize(keyword)
-        found: List[Tuple[str, str]] = []
+        candidates: List[Tuple[str, str]] = []
+        matched: List[Tuple[str, str]] = []
         seen = set()
         for match in re.finditer(
             r'<a[^>]+href=["\']?/Home/Bangumi/(\d+)[^>]*>(.*?)</a>',
@@ -323,11 +324,14 @@ class MikanAnime(_PluginBase):
             )
             if not title:
                 continue
+            candidates.append((bangumi_id, title))
             norm_title = self._normalize(title)
             if norm_kw and (norm_kw in norm_title or norm_title in norm_kw):
-                found.append((bangumi_id, title))
-        found.sort(key=lambda item: (0 if self._normalize(item[1]) == norm_kw else 1, len(item[1])))
-        return found[: self._bangumi_limit]
+                matched.append((bangumi_id, title))
+        # 繁体/简体、别名等导致严格匹配失败时，回退到 HTML 搜索结果里的前几个番剧
+        chosen = matched or candidates
+        chosen.sort(key=lambda item: (0 if self._normalize(item[1]) == norm_kw else 1, len(item[1])))
+        return chosen[: self._bangumi_limit]
 
     def _full_entries(self, keyword: str) -> List[Dict[str, Any]]:
         """按番剧全集抓取：找到匹配的 Bangumi 后拉取该番剧的完整 RSS。"""
