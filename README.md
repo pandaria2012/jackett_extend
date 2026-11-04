@@ -70,3 +70,8 @@ MIT
 
 本仓库还包含 **SixV** 插件：把 6v520.cc 的搜索/磁力接入 MoviePilot，并把磁力链接的 dn 重写为规范影视名（解决原站 dn 是广告名的问题）。
 
+
+## 附带插件：MikanAnime（蜜柑计划）
+
+把 mikan.tangbai.cc 的动漫 RSS 搜索接入 MoviePilot，支持集数/画质/大小排序和返回数量配置。
+

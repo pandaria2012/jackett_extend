@@ -22,5 +22,17 @@
     "history": {
       "v1.0.0": "首版：6v520 搜索 + 磁力 dn 重命名为影视名"
     }
+  },
+  "MikanAnime": {
+    "name": "MikanAnime",
+    "description": "蜜柑计划（mikan.tangbai.cc）动漫资源源：RSS 搜索、种子、集数/画质排序",
+    "labels": "动漫,Mikan,蜜柑计划,番剧,搜索",
+    "version": "1.0.0",
+    "icon": "Mikan.png",
+    "author": "pandaria2012",
+    "level": 0,
+    "history": {
+      "v1.0.0": "首版：Mikan RSS 搜索接入 MoviePilot，支持集数/画质/大小排序"
+    }
   }
 }
